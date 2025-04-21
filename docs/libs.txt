@@ -1,14 +1,11 @@
 [https://www.npmjs.com/package/cross-env]
-npm i cross-env
+bun add cross-env
 
 [https://www.npmjs.com/package/axios]
-npm i axios
+bun add axios
 
-[https://www.npmjs.com/package/zod]
-npm i zod
+[https://www.npmjs.com/package/axios]
+bun add @reduxjs/toolkit react-redux redux-persist
 
-[https://www.npmjs.com/package/nativewind]
-bun install nativewind tailwindcss@^3.4.17 react-native-reanimated@3.16.2 react-native-safe-area-context
-
-[https://www.npmjs.com/package/tailwind-rn]
-npm i tailwind-rn
+[https://www.npmjs.com/package/@react-native-async-storage/async-storage]
+bun add @react-native-async-storage/async-storage

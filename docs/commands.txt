@@ -1,0 +1,2 @@
+npm create gluestack@latest
+bun tart:exotic

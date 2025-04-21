@@ -1,0 +1,125 @@
+react-native-app-auth
+expo-secure-store
+
+import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
+import { authorize } from 'react-native-app-auth';
+
+// Config opcional para OAuth
+const googleConfig = {
+  issuer: 'https://accounts.google.com',
+  clientId: 'SEU_CLIENT_ID',
+  redirectUrl: 'com.seuapp:/oauthredirect',
+  scopes: ['openid', 'profile', 'email'],
+};
+
+const api = axios.create({
+  baseURL: 'https://sua-api.com',
+});
+
+export const signInWithCredentials = async (email, password) => {
+  const response = await api.post('/auth/login', { email, password });
+  const { accessToken, refreshToken } = response.data;
+
+  await SecureStore.setItemAsync('accessToken', accessToken);
+  await SecureStore.setItemAsync('refreshToken', refreshToken);
+
+  return response.data;
+};
+
+export const signInWithGoogle = async () => {
+  const googleAuth = await authorize(googleConfig);
+
+  // Enviar o token de id para sua API fazer o login OAuth
+  const response = await api.post('/auth/oauth/google', {
+    idToken: googleAuth.idToken,
+  });
+
+  const { accessToken, refreshToken } = response.data;
+
+  await SecureStore.setItemAsync('accessToken', accessToken);
+  await SecureStore.setItemAsync('refreshToken', refreshToken);
+
+  return response.data;
+};
+
+export const refreshToken = async () => {
+  const token = await SecureStore.getItemAsync('refreshToken');
+  if (!token) throw new Error('No refresh token available');
+
+  const response = await api.post('/auth/refresh', { refreshToken: token });
+
+  const { accessToken, refreshToken: newRefreshToken } = response.data;
+
+  await SecureStore.setItemAsync('accessToken', accessToken);
+  await SecureStore.setItemAsync('refreshToken', newRefreshToken);
+
+  return response.data;
+};
+
+export const signOut = async () => {
+  await SecureStore.deleteItemAsync('accessToken');
+  await SecureStore.deleteItemAsync('refreshToken');
+};
+
+export const getAccessToken = async () => {
+  return await SecureStore.getItemAsync('accessToken');
+};
+
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import {
+  signInWithCredentials,
+  signInWithGoogle,
+  refreshToken,
+  signOut,
+  getAccessToken,
+} from './authService';
+
+const AuthContext = createContext(null);
+
+export const AuthProvider = ({ children }) => {
+  const [accessToken, setAccessToken] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      const token = await getAccessToken();
+      setAccessToken(token);
+    })();
+  }, []);
+
+  const loginWithCredentials = async (email, password) => {
+    const data = await signInWithCredentials(email, password);
+    setAccessToken(data.accessToken);
+  };
+
+  const loginWithGoogle = async () => {
+    const data = await signInWithGoogle();
+    setAccessToken(data.accessToken);
+  };
+
+  const logout = async () => {
+    await signOut();
+    setAccessToken(null);
+  };
+
+  const renewToken = async () => {
+    const data = await refreshToken();
+    setAccessToken(data.accessToken);
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        accessToken,
+        loginWithCredentials,
+        loginWithGoogle,
+        logout,
+        renewToken,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => useContext(AuthContext);

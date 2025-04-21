@@ -1,0 +1,9 @@
+[https://expo.dev/]
+expo
+
+[https://starter.obytes.com/]
+obytes starter
+
+[https://gluestack.io/]
+gluestack
+

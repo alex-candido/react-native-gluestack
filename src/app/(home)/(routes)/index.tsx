@@ -5,10 +5,12 @@ import Logo from "@/assets/Icons/Logo";
 import Rocket from "@/assets/Icons/Rocket";
 import { Box } from "@/components/ui/box";
 import { Text } from "@/components/ui/text";
-import React from "react";
-import { ScrollView } from "react-native";
-
+import { AppDispatch, RootState } from "@/store";
+import { findAllUsers } from "@/store/actions/users-actions";
 import { Link } from "expo-router";
+import React, { useEffect } from "react";
+import { ScrollView } from "react-native";
+import { useDispatch, useSelector } from "react-redux";
 
 const FeatureCard = ({ iconSvg: IconSvg, name, desc }: any) => {
   return (
@@ -30,6 +32,16 @@ const FeatureCard = ({ iconSvg: IconSvg, name, desc }: any) => {
 };
 
 export default function Home() {
+  const dispatch: AppDispatch = useDispatch();
+  const { list, loading, error, message } = useSelector(
+    (state: RootState) => state.users,
+  );
+
+  useEffect(() => {
+    dispatch(findAllUsers());
+    console.log(list);
+  }, [dispatch]);
+
   return (
     <Box className="flex-1 bg-black h-[100vh]">
       <ScrollView
@@ -50,7 +62,7 @@ export default function Home() {
               </Text>
             </Box>
             <Box>
-              <Link href="/app/">
+              <Link href="/app">
                 <Box className="bg-background-template py-2 px-6 rounded-full items-center flex-column sm:flex-row md:self-start">
                   <Text className="text-typography-white font-normal">
                     Explore App Navigation
@@ -86,6 +98,20 @@ export default function Home() {
               name="Deploy"
               desc="Instantly drop your gluestack site to a shareable URL with vercel."
             />
+          </Box>
+
+          {loading && <Text>Loading users...</Text>}
+          {error && <Text>Error: {message}</Text>}
+          <Box className="flex-1">
+            {list && list.length > 0 ? (
+              list.map((user) => (
+                <Text key={user.id} className="text-white">
+                  {user.name} - {user.email}
+                </Text>
+              ))
+            ) : (
+              <Text>No users found</Text>
+            )}
           </Box>
         </Box>
       </ScrollView>
