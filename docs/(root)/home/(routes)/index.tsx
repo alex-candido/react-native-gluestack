@@ -1,12 +1,12 @@
-import React from "react";
-import Gradient from "@/assets/Icons/Gradient";
 import DocumentData from "@/assets/Icons/DocumentData";
+import Gradient from "@/assets/Icons/Gradient";
 import LightBulbPerson from "@/assets/Icons/LightbulbPerson";
-import Rocket from "@/assets/Icons/Rocket";
 import Logo from "@/assets/Icons/Logo";
+import Rocket from "@/assets/Icons/Rocket";
 import { Box } from "@/components/ui/box";
-import { ScrollView } from "react-native";
 import { Text } from "@/components/ui/text";
+import React from "react";
+import { ScrollView } from "react-native";
 
 import { Link } from "expo-router";
 

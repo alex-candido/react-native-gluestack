@@ -1,12 +1,12 @@
-import React from "react";
-import Gradient from "@/assets/Icons/Gradient";
 import DocumentData from "@/assets/Icons/DocumentData";
+import Gradient from "@/assets/Icons/Gradient";
 import LightBulbPerson from "@/assets/Icons/LightbulbPerson";
-import Rocket from "@/assets/Icons/Rocket";
 import Logo from "@/assets/Icons/Logo";
+import Rocket from "@/assets/Icons/Rocket";
 import { Box } from "@/components/ui/box";
-import { ScrollView } from "react-native";
 import { Text } from "@/components/ui/text";
+import React from "react";
+import { ScrollView } from "react-native";
 
 import { Link } from "expo-router";
 
@@ -51,20 +51,20 @@ export default function Home() {
             </Box>
             <Box>
               <Link href="/app/">
-              <Box className="bg-background-template py-2 px-6 rounded-full items-center flex-column sm:flex-row md:self-start">
-                <Text className="text-typography-white font-normal">
-                  Explore App Navigation
-                </Text>
-              </Box>
-            </Link>
-            <Link href="/auth/sign-in">
-              <Box className="bg-background-template py-2 px-6 rounded-full items-center flex-column sm:flex-row md:self-start">
-                <Text className="text-typography-white font-normal">
-                  Explore Auth Navigation
-                </Text>
-              </Box>
-            </Link>
-            </Box> 
+                <Box className="bg-background-template py-2 px-6 rounded-full items-center flex-column sm:flex-row md:self-start">
+                  <Text className="text-typography-white font-normal">
+                    Explore App Navigation
+                  </Text>
+                </Box>
+              </Link>
+              <Link href="/auth/sign-in">
+                <Box className="bg-background-template py-2 px-6 rounded-full items-center flex-column sm:flex-row md:self-start">
+                  <Text className="text-typography-white font-normal">
+                    Explore Auth Navigation
+                  </Text>
+                </Box>
+              </Link>
+            </Box>
           </Box>
           <Box className="flex-1 justify-center items-center h-[20px] w-[300px] lg:h-[160px] lg:w-[400px]">
             <Logo />

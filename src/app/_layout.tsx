@@ -4,7 +4,7 @@ import { Slot } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useState } from "react";
 
-import "../global.css";
+import "../../global.css";
 import Providers from "./_providers";
 
 export {
