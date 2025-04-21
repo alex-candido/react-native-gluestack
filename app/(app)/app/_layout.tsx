@@ -5,7 +5,7 @@ export {
 
 export const unstable_settings = {
   // Ensure that reloading on `/modal` keeps a back button present.
-  initialRouteName: "(tabs)",
+  initialRouteName: "(routes)",
 };
 
 import { Stack } from "expo-router";
@@ -13,7 +13,7 @@ import { Stack } from "expo-router";
 export default function AppLayout() {
   return (
     <Stack>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="(routes)" options={{ headerShown: false }} />
     </Stack>
   );
 }
