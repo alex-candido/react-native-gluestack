@@ -1,0 +1,980 @@
+Let's implement authentication in your React Native Expo app using `react-native-app-auth` for OAuth flows, `expo-secure-store` for secure token storage, and Redux for state management. This will provide a robust authentication system similar to NextAuth but tailored for React Native.
+
+First, let's install the required dependencies:
+
+```bash
+npx expo install react-native-app-auth expo-secure-store
+npm install @reduxjs/toolkit react-redux redux-persist
+```
+
+Now, let's create the authentication system step by step:
+
+## 1. Setup Secure Storage Service
+
+```typescript
+// src/services/secureStorage.ts
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+
+// Create storage interface
+interface StorageService {
+  getItem: (key: string) => Promise<string | null>;
+  setItem: (key: string, value: string) => Promise<void>;
+  removeItem: (key: string) => Promise<void>;
+}
+
+// Web implementation using localStorage
+const webStorage: StorageService = {
+  getItem: async (key: string) => {
+    return localStorage.getItem(key);
+  },
+  setItem: async (key: string, value: string) => {
+    localStorage.setItem(key, value);
+  },
+  removeItem: async (key: string) => {
+    localStorage.removeItem(key);
+  },
+};
+
+// Native implementation using SecureStore
+const nativeStorage: StorageService = {
+  getItem: SecureStore.getItemAsync,
+  setItem: SecureStore.setItemAsync,
+  removeItem: SecureStore.deleteItemAsync,
+};
+
+// Choose appropriate implementation based on platform
+const secureStorage: StorageService = Platform.OS === 'web' ? webStorage : nativeStorage;
+
+export default secureStorage;
+```
+
+## 2. Create Auth Redux Slice
+
+```typescript
+// src/store/authSlice.ts
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import { authorize, refresh, revoke } from 'react-native-app-auth';
+import secureStorage from '../services/secureStorage';
+
+// OAuth configuration
+const authConfig = {
+  issuer: 'https://your-oauth-provider.com',
+  clientId: 'YOUR_CLIENT_ID',
+  redirectUrl: 'your.app.scheme://callback',
+  scopes: ['openid', 'profile', 'email'],
+  additionalParameters: {},
+  serviceConfiguration: {
+    authorizationEndpoint: 'https://your-oauth-provider.com/oauth/authorize',
+    tokenEndpoint: 'https://your-oauth-provider.com/oauth/token',
+    revocationEndpoint: 'https://your-oauth-provider.com/oauth/revoke',
+  },
+};
+
+// Access token storage key
+const ACCESS_TOKEN_KEY = 'auth_access_token';
+const REFRESH_TOKEN_KEY = 'auth_refresh_token';
+const USER_INFO_KEY = 'auth_user_info';
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  picture?: string;
+  [key: string]: any;
+}
+
+interface AuthState {
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  user: User | null;
+  accessToken: string | null;
+  refreshToken: string | null;
+  error: string | null;
+}
+
+const initialState: AuthState = {
+  isAuthenticated: false,
+  isLoading: false,
+  user: null,
+  accessToken: null,
+  refreshToken: null,
+  error: null,
+};
+
+// Helper function to decode JWT
+function decodeJwt(token: string): any {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch (error) {
+    return null;
+  }
+}
+
+// Get user info from token or API
+const getUserInfo = async (accessToken: string): Promise<User> => {
+  try {
+    // Option 1: Extract from JWT if it contains user info
+    const decodedToken = decodeJwt(accessToken);
+    if (decodedToken) {
+      return {
+        id: decodedToken.sub,
+        name: decodedToken.name || '',
+        email: decodedToken.email || '',
+        picture: decodedToken.picture || '',
+      };
+    }
+    
+    // Option 2: Call user info endpoint
+    const response = await fetch('https://your-oauth-provider.com/userinfo', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    const userData = await response.json();
+    
+    return {
+      id: userData.sub,
+      name: userData.name || '',
+      email: userData.email || '',
+      picture: userData.picture || '',
+    };
+  } catch (error) {
+    throw new Error('Failed to get user info');
+  }
+};
+
+// Async thunks
+export const login = createAsyncThunk(
+  'auth/login',
+  async (_, { rejectWithValue }) => {
+    try {
+      // Execute authorization flow
+      const result = await authorize(authConfig);
+      
+      // Get user info
+      const user = await getUserInfo(result.accessToken);
+      
+      // Store tokens and user info
+      await secureStorage.setItem(ACCESS_TOKEN_KEY, result.accessToken);
+      if (result.refreshToken) {
+        await secureStorage.setItem(REFRESH_TOKEN_KEY, result.refreshToken);
+      }
+      await secureStorage.setItem(USER_INFO_KEY, JSON.stringify(user));
+      
+      return {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        user,
+      };
+    } catch (error: any) {
+      return rejectWithValue(error.message || 'Authentication failed');
+    }
+  }
+);
+
+export const refreshToken = createAsyncThunk(
+  'auth/refreshToken',
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const state = getState() as { auth: AuthState };
+      const currentRefreshToken = state.auth.refreshToken;
+      
+      if (!currentRefreshToken) {
+        throw new Error('No refresh token available');
+      }
+      
+      const result = await refresh(authConfig, {
+        refreshToken: currentRefreshToken,
+      });
+      
+      // Get user info
+      const user = await getUserInfo(result.accessToken);
+      
+      // Store new tokens
+      await secureStorage.setItem(ACCESS_TOKEN_KEY, result.accessToken);
+      if (result.refreshToken) {
+        await secureStorage.setItem(REFRESH_TOKEN_KEY, result.refreshToken);
+      }
+      await secureStorage.setItem(USER_INFO_KEY, JSON.stringify(user));
+      
+      return {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken || currentRefreshToken,
+        user,
+      };
+    } catch (error: any) {
+      return rejectWithValue(error.message || 'Token refresh failed');
+    }
+  }
+);
+
+export const logout = createAsyncThunk(
+  'auth/logout',
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const state = getState() as { auth: AuthState };
+      const accessToken = state.auth.accessToken;
+      const refreshToken = state.auth.refreshToken;
+      
+      // Revoke token if available
+      if (accessToken) {
+        try {
+          await revoke(authConfig, {
+            tokenToRevoke: accessToken,
+            sendClientId: true,
+          });
+        } catch (error) {
+          // Continue even if revoke fails
+          console.log('Token revocation failed:', error);
+        }
+      }
+      
+      // Clean up storage
+      await secureStorage.removeItem(ACCESS_TOKEN_KEY);
+      await secureStorage.removeItem(REFRESH_TOKEN_KEY);
+      await secureStorage.removeItem(USER_INFO_KEY);
+      
+      return true;
+    } catch (error: any) {
+      return rejectWithValue(error.message || 'Logout failed');
+    }
+  }
+);
+
+export const checkAuth = createAsyncThunk(
+  'auth/checkAuth',
+  async (_, { dispatch, rejectWithValue }) => {
+    try {
+      // Check if we have tokens in storage
+      const accessToken = await secureStorage.getItem(ACCESS_TOKEN_KEY);
+      const refreshToken = await secureStorage.getItem(REFRESH_TOKEN_KEY);
+      const userInfoStr = await secureStorage.getItem(USER_INFO_KEY);
+      
+      if (!accessToken) {
+        throw new Error('No access token found');
+      }
+      
+      // Decode the token to check expiration
+      const decodedToken = decodeJwt(accessToken);
+      const isExpired = decodedToken?.exp 
+        ? decodedToken.exp * 1000 < Date.now()
+        : false;
+        
+      if (isExpired && refreshToken) {
+        // Token is expired but we have a refresh token
+        return dispatch(refreshToken()).unwrap();
+      } else if (isExpired) {
+        // Token is expired and no refresh token
+        throw new Error('Session expired');
+      }
+      
+      // Parse user info
+      const user = userInfoStr 
+        ? JSON.parse(userInfoStr) as User
+        : await getUserInfo(accessToken);
+        
+      return {
+        accessToken,
+        refreshToken,
+        user,
+      };
+    } catch (error: any) {
+      // Clear storage on auth check failure
+      await secureStorage.removeItem(ACCESS_TOKEN_KEY);
+      await secureStorage.removeItem(REFRESH_TOKEN_KEY);
+      await secureStorage.removeItem(USER_INFO_KEY);
+      
+      return rejectWithValue(error.message || 'Authentication check failed');
+    }
+  }
+);
+
+// Auth slice
+const authSlice = createSlice({
+  name: 'auth',
+  initialState,
+  reducers: {
+    clearError: (state) => {
+      state.error = null;
+    },
+  },
+  extraReducers: (builder) => {
+    // Login
+    builder.addCase(login.pending, (state) => {
+      state.isLoading = true;
+      state.error = null;
+    });
+    builder.addCase(login.fulfilled, (state, action) => {
+      state.isLoading = false;
+      state.isAuthenticated = true;
+      state.accessToken = action.payload.accessToken;
+      state.refreshToken = action.payload.refreshToken;
+      state.user = action.payload.user;
+    });
+    builder.addCase(login.rejected, (state, action) => {
+      state.isLoading = false;
+      state.error = action.payload as string;
+    });
+    
+    // Refresh token
+    builder.addCase(refreshToken.pending, (state) => {
+      state.isLoading = true;
+    });
+    builder.addCase(refreshToken.fulfilled, (state, action) => {
+      state.isLoading = false;
+      state.isAuthenticated = true;
+      state.accessToken = action.payload.accessToken;
+      state.refreshToken = action.payload.refreshToken;
+      state.user = action.payload.user;
+    });
+    builder.addCase(refreshToken.rejected, (state, action) => {
+      state.isLoading = false;
+      state.isAuthenticated = false;
+      state.accessToken = null;
+      state.refreshToken = null;
+      state.user = null;
+      state.error = action.payload as string;
+    });
+    
+    // Logout
+    builder.addCase(logout.pending, (state) => {
+      state.isLoading = true;
+    });
+    builder.addCase(logout.fulfilled, (state) => {
+      state.isLoading = false;
+      state.isAuthenticated = false;
+      state.accessToken = null;
+      state.refreshToken = null;
+      state.user = null;
+    });
+    builder.addCase(logout.rejected, (state) => {
+      state.isLoading = false;
+      state.isAuthenticated = false;
+      state.accessToken = null;
+      state.refreshToken = null;
+      state.user = null;
+    });
+    
+    // Check auth
+    builder.addCase(checkAuth.pending, (state) => {
+      state.isLoading = true;
+    });
+    builder.addCase(checkAuth.fulfilled, (state, action) => {
+      state.isLoading = false;
+      state.isAuthenticated = true;
+      state.accessToken = action.payload.accessToken;
+      state.refreshToken = action.payload.refreshToken;
+      state.user = action.payload.user;
+    });
+    builder.addCase(checkAuth.rejected, (state) => {
+      state.isLoading = false;
+      state.isAuthenticated = false;
+      state.accessToken = null;
+      state.refreshToken = null;
+      state.user = null;
+    });
+  },
+});
+
+export const { clearError } = authSlice.actions;
+export default authSlice.reducer;
+```
+
+## 3. Update Redux Store
+
+```typescript
+// src/store/index.ts
+import { configureStore, combineReducers } from '@reduxjs/toolkit';
+import { persistStore, persistReducer } from 'redux-persist';
+import authReducer from './authSlice';
+import usersReducer from './slices/usersSlice';
+
+// Create a safe storage adapter
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Create a localStorage adapter that implements the async storage API
+const createWebStorage = () => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    return {
+      getItem: (key: string) => {
+        return Promise.resolve(window.localStorage.getItem(key));
+      },
+      setItem: (key: string, value: string) => {
+        return Promise.resolve(window.localStorage.setItem(key, value));
+      },
+      removeItem: (key: string) => {
+        return Promise.resolve(window.localStorage.removeItem(key));
+      },
+    };
+  }
+  // Return a no-op storage for SSR
+  return {
+    getItem: (_key: string) => Promise.resolve(null),
+    setItem: (_key: string, _value: string) => Promise.resolve(),
+    removeItem: (_key: string) => Promise.resolve(),
+  };
+};
+
+// Get the appropriate storage
+const storage = Platform.OS === 'web' ? createWebStorage() : AsyncStorage;
+
+const rootReducer = combineReducers({
+  auth: authReducer,
+  users: usersReducer,
+  // Add other reducers here
+});
+
+const persistConfig = {
+  key: 'root',
+  version: 1,
+  storage,
+  whitelist: ['auth', 'users'], // Only persist these reducers
+};
+
+const persistedReducer = persistReducer(persistConfig, rootReducer);
+
+export const store = configureStore({
+  reducer: persistedReducer,
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: {
+        ignoredActions: ['persist/PERSIST', 'persist/REHYDRATE'],
+      },
+    }),
+});
+
+export const persistor = persistStore(store);
+export type RootState = ReturnType<typeof rootReducer>;
+export type AppDispatch = typeof store.dispatch;
+```
+
+## 4. Create Auth Context
+
+```typescript
+// src/auth/AuthContext.tsx
+import React, { createContext, useContext, useEffect } from 'react';
+import { useSelector, useDispatch } from 'react-redux';
+import { RootState } from '../store';
+import { 
+  login as loginAction, 
+  logout as logoutAction,
+  checkAuth as checkAuthAction,
+  User
+} from '../store/authSlice';
+
+interface AuthContextType {
+  user: User | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: string | null;
+  login: () => Promise<void>;
+  logout: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const dispatch = useDispatch();
+  const { user, isAuthenticated, isLoading, error } = useSelector(
+    (state: RootState) => state.auth
+  );
+
+  // Check authentication status on app load
+  useEffect(() => {
+    const checkAuthStatus = async () => {
+      try {
+        // @ts-ignore (fix type later)
+        await dispatch(checkAuthAction());
+      } catch (error) {
+        console.log('Auth check failed:', error);
+      }
+    };
+
+    checkAuthStatus();
+  }, [dispatch]);
+
+  const login = async () => {
+    try {
+      // @ts-ignore (fix type later)
+      await dispatch(loginAction());
+    } catch (error) {
+      console.log('Login failed:', error);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      // @ts-ignore (fix type later)
+      await dispatch(logoutAction());
+    } catch (error) {
+      console.log('Logout failed:', error);
+    }
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        isAuthenticated,
+        isLoading,
+        error,
+        login,
+        logout,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = (): AuthContextType => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+```
+
+## 5. Create Auth Navigation Guard
+
+```typescript
+// src/app/_layout.tsx
+import { Slot, useRouter, useSegments } from 'expo-router';
+import { useEffect } from 'react';
+import { Provider } from 'react-redux';
+import { PersistGate } from 'redux-persist/integration/react';
+import { store, persistor } from '../store';
+import { AuthProvider, useAuth } from '../auth/AuthContext';
+
+function AuthWrapper({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    const inAuthGroup = segments[0] === '(auth)';
+    const inProtectedGroup = segments[0] === '(app)';
+
+    if (
+      // If the user is not signed in and the initial segment is not in the auth group,
+      // redirect to the sign-in screen.
+      !isAuthenticated &&
+      !inAuthGroup
+    ) {
+      router.replace('/login');
+    } else if (isAuthenticated && inAuthGroup) {
+      // Redirect away from the sign-in screen.
+      router.replace('/');
+    }
+  }, [isAuthenticated, segments, isLoading]);
+
+  return <>{children}</>;
+}
+
+export default function RootLayout() {
+  return (
+    <Provider store={store}>
+      <PersistGate loading={null} persistor={persistor}>
+        <AuthProvider>
+          <AuthWrapper>
+            <Slot />
+          </AuthWrapper>
+        </AuthProvider>
+      </PersistGate>
+    </Provider>
+  );
+}
+```
+
+## 6. Login Screen
+
+```typescript
+// src/app/(auth)/login.tsx
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { useAuth } from '../../auth/AuthContext';
+
+export default function LoginScreen() {
+  const { login, isLoading, error } = useAuth();
+
+  const handleLogin = async () => {
+    await login();
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Welcome Back</Text>
+      <Text style={styles.subtitle}>Login to your account</Text>
+      
+      {error && <Text style={styles.error}>{error}</Text>}
+      
+      <TouchableOpacity 
+        style={styles.button} 
+        onPress={handleLogin}
+        disabled={isLoading}
+      >
+        {isLoading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Login with OAuth</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 32,
+  },
+  button: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    width: '100%',
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  error: {
+    color: 'red',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+});
+```
+
+## 7. Dashboard Screen
+
+```typescript
+// src/app/(app)/index.tsx
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { useAuth } from '../../auth/AuthContext';
+
+export default function Dashboard() {
+  const { user, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Dashboard</Text>
+      </View>
+      
+      <View style={styles.profileCard}>
+        {user?.picture && (
+          <Image
+            source={{ uri: user.picture }}
+            style={styles.profileImage}
+          />
+        )}
+        <Text style={styles.name}>{user?.name || 'User'}</Text>
+        <Text style={styles.email}>{user?.email}</Text>
+      </View>
+      
+      <View style={styles.infoSection}>
+        <Text style={styles.sectionTitle}>Account Info</Text>
+        <View style={styles.infoItem}>
+          <Text style={styles.infoLabel}>ID:</Text>
+          <Text style={styles.infoValue}>{user?.id}</Text>
+        </View>
+        {/* Add more user info as needed */}
+      </View>
+      
+      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <Text style={styles.logoutButtonText}>Logout</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  header: {
+    backgroundColor: '#fff',
+    padding: 16,
+    paddingTop: 60,
+    paddingBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  profileCard: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  profileImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    marginBottom: 12,
+  },
+  name: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  email: {
+    fontSize: 14,
+    color: '#666',
+  },
+  infoSection: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  infoItem: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  infoLabel: {
+    fontWeight: '500',
+    width: 80,
+  },
+  infoValue: {
+    flex: 1,
+    color: '#666',
+  },
+  logoutButton: {
+    backgroundColor: '#ff3b30',
+    margin: 16,
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  logoutButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+});
+```
+
+## 8. Setup API with Interceptors
+
+```typescript
+// src/services/api.ts
+import axios from 'axios';
+import { store } from '../store';
+import { refreshToken, logout } from '../store/authSlice';
+
+const API_URL = 'https://your-api-url.com/api';
+
+// Create axios instance
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  timeout: 10000,
+});
+
+// Add a request interceptor
+api.interceptors.request.use(
+  (config) => {
+    // Get current auth state
+    const authState = store.getState().auth;
+    
+    // If token exists, add it to request headers
+    if (authState.accessToken) {
+      config.headers.Authorization = `Bearer ${authState.accessToken}`;
+    }
+    
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Add a response interceptor for token refresh
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    
+    // If error is 401 and not a retry
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      
+      try {
+        // Try to refresh the token
+        await store.dispatch(refreshToken());
+        
+        // Get new access token
+        const newToken = store.getState().auth.accessToken;
+        
+        // Retry the original request with new token
+        if (newToken) {
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          return axios(originalRequest);
+        }
+      } catch (refreshError) {
+        // If refresh fails, logout
+        store.dispatch(logout());
+        return Promise.reject(refreshError);
+      }
+    }
+    
+    return Promise.reject(error);
+  }
+);
+
+export default api;
+```
+
+## 9. Native Modules Configuration
+
+For iOS, add this to your `Info.plist`:
+
+```xml
+<key>CFBundleURLTypes</key>
+<array>
+  <dict>
+    <key>CFBundleURLSchemes</key>
+    <array>
+      <string>your.app.scheme</string>
+    </array>
+  </dict>
+</array>
+```
+
+For Android, add this to your `AndroidManifest.xml`:
+
+```xml
+<activity
+  android:name=".MainActivity"
+  android:exported="true">
+  <intent-filter>
+    <action android:name="android.intent.action.MAIN" />
+    <category android:name="android.intent.category.LAUNCHER" />
+  </intent-filter>
+  <intent-filter>
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="your.app.scheme" />
+  </intent-filter>
+</activity>
+```
+
+## 10. Folder Structure
+
+Here's a recommended folder structure:
+
+```
+src/
+├── app/
+│   ├── _layout.tsx
+│   ├── (auth)/
+│   │   └── login.tsx
+│   └── (app)/
+│       └── index.tsx
+├── auth/
+│   └── AuthContext.tsx
+├── services/
+│   ├── api.ts
+│   └── secureStorage.ts
+└── store/
+    ├── index.ts
+    ├── authSlice.ts
+    └── slices/
+        └── usersSlice.ts
+```
+
+## Configuration with Expo Router
+
+You may need to add the following to your `app.json`:
+
+```json
+{
+  "expo": {
+    "scheme": "your.app.scheme",
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "react-native-app-auth",
+        {
+          "issuer": "https://your-oauth-provider.com"
+        }
+      ]
+    ]
+  }
+}
+```
+
+This implementation provides a comprehensive authentication system using:
+
+1. `react-native-app-auth` for OAuth 2.0 flows
+2. `expo-secure-store` for secure token storage on native platforms
+3. Redux for state management with persistence
+4. Token refresh and auto-logout on expiration
+5. Protected routes with Expo Router
+6. Support for both mobile and web platforms
+
+You'll need to customize the OAuth provider configuration based on your authentication provider (Google, Auth0, Okta, etc.). This setup is similar to NextAuth.js but optimized for React Native and Expo environments.
